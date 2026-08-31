@@ -166,7 +166,7 @@ function wireSetup(){
         $('#keyInput2').value = ordered.map(k => k + '. ' + res.map[k]).join('  ');
         toast('🤖 ' + res.solved + ' AI answers filled in the Answer Key box');
       } else {
-        alert('No answers found — check keys / rate limit. (Add more keys, or wait 30s.)');
+        alert(res.lastError ? aiFailMsg(res.lastError) : 'No answers found — check keys / rate limit. (Add more keys, or wait 30s.)');
       }
     }catch(e){
       alert('AI error: ' + (e && e.message ? e.message : e));
@@ -244,15 +244,25 @@ function startExam(){
     submitted: false, submittedReason: '',
     key: keyStr, keyMap, keySource,
     detected: detection ? {questions: detection.questions, key: detection.key} : null,
-    curQ: 1, demoPaper: false
+    curQ: 1, demoPaper: false,
+    pdfView: $('#showPdf') ? $('#showPdf').checked : true
   };
+  try{ localStorage.setItem('mxp_pdf', state.pdfView ? '1' : '0'); }catch(e){}
   curQ = 1;
   saveState();
   enterExam(false);
 }
 
+function applyPdfView(){
+  const on = state ? state.pdfView !== false : true;
+  $('#examScreen').classList.toggle('pdf-off', !on);
+  const t = $('#pdfToggle');
+  if(t) t.classList.toggle('off', !on);
+  if(!on && document.body.dataset.tab === 'paper') setTab('question');
+}
 function enterExam(resumed){
   show('#examScreen');
+  applyPdfView();
   $('#headerExamName').textContent = state.name;
   const badge = $('#modeBadge');
   badge.textContent = state.mode === 'practice' ? 'PRACTICE' : 'EXAM';
@@ -708,15 +718,45 @@ async function extractPdfText(){
   const parts = [];
   for(let p = 1; p <= pdfDoc.numPages; p++){
     const page = await pdfDoc.getPage(p);
+    const vp = page.getViewport({scale: 1});
     const tc = await page.getTextContent();
-    const lines = {};
+    const items = [];
     for(const it of tc.items){
-      if(!it.str) continue;
-      const y = Math.round(it.transform[5]);
-      (lines[y] = lines[y] || []).push([it.transform[4], it.str]);
+      if(!it.str || !it.str.trim()) continue;
+      items.push({ x: it.transform[4], y: it.transform[5], str: it.str });
     }
-    parts.push(Object.keys(lines).map(Number).sort((a,b)=>b-a)
-      .map(y => lines[y].sort((a,b)=>a[0]-b[0]).map(o=>o[1]).join(' ')).join('\n'));
+    if(!items.length) continue;
+    // two-column detection on ITEM x positions (before line grouping):
+    // item start-x clusters with a big gap in the middle band of the page
+    const uniq = [...new Set(items.map(i => Math.round(i.x)))].sort((a, b) => a - b);
+    let bestGap = 0, bestAt = 0;
+    for(let i = 1; i < uniq.length; i++){
+      const d = uniq[i] - uniq[i - 1];
+      if(d > bestGap){ bestGap = d; bestAt = uniq[i]; }
+    }
+    const nL = items.filter(i => i.x < bestAt).length;
+    const nR = items.filter(i => i.x >= bestAt).length;
+    const isTwoCol = uniq.length >= 2 &&
+      bestGap > Math.min(50, vp.width * 0.08) &&
+      bestAt > vp.width * 0.35 && bestAt < vp.width * 0.65 &&
+      nL >= 4 && nR >= 4;
+    const cols = isTwoCol
+      ? [items.filter(i => i.x < bestAt), items.filter(i => i.x >= bestAt)]
+      : [items];
+    for(const col of cols){
+      // group into visual lines (Y tolerance — superscripts/descenders with
+      // slightly different baselines no longer split a line in two)
+      const sorted = col.slice().sort((a, b) => (b.y - a.y) || (a.x - b.x));
+      const tol = Math.max(3, vp.height / 120);
+      const lines = [];
+      for(const it of sorted){
+        const L = lines[lines.length - 1];
+        if(L && Math.abs(it.y - L.y) <= tol) L.items.push(it);
+        else lines.push({ y: it.y, items: [it] });
+      }
+      const text = lines.map(L => L.items.slice().sort((a, b) => a.x - b.x).map(i => i.str).join(' ')).join('\n');
+      parts.push(text);
+    }
   }
   return parts.join('\n');
 }
@@ -728,6 +768,8 @@ function extractOptions(block){
   };
   let marks = find(/\(\s*([A-Da-d])\s*\)\s*/g);
   if(marks.length < 2) marks = find(/(?:^|\n)\s*([A-Da-d])\s*[\.:)]\s+/gm);
+  // inline options on one line: "A) one B) two C) three D) four"
+  if(marks.length < 2) marks = find(/(?<![A-Za-z0-9(])([A-Da-d])\s*[\.:)]\s+(?=\S)/g);
   if(marks.length < 2) return {};
   const clean = []; const seen = {};
   for(const m of marks){ if(!seen[m.letter]){ seen[m.letter] = 1; clean.push(m); if(clean.length === 4) break; } }
@@ -774,32 +816,67 @@ function keyHeadingPos(text){
 }
 function detectPaper(text, fallbackTotal){
   const keyPos = keyHeadingPos(text);
-  const qRe = /(?:^|\n)[ \t]*(?:Q\.?[ \t]*|Question[ \t]+)?(\d{1,3})[ \t]*[).][ \t]+/g;
-  const found = [];
-  let m, last = 0;
-  while((m = qRe.exec(text)) !== null){
-    const num = +m[1];
-    if(num < 1 || num > 500 || num <= last) continue;
-    last = num;
-    found.push({num, index: m.index, start: m.index + m[0].length});
+  // strict: number + . or ) followed by whitespace (handles "1." "1)" "Q1." "Question 1.")
+  const qRe = /(?:^|\n)[ \t]*(?:Q[\.\-]?[ \t]*|Question[ \t.\-]+)?(\d{1,3})[ \t]*[).][ \t]+/g;
+  // loose fallback: no space needed after the dot ("1.In the...")
+  const qReLoose = /(?:^|\n)[ \t]*(?:Q[\.\-]?[ \t]*|Question[ \t.\-]+)?(?<![\d,.])(\d{1,3})[ \t]*[).](?=\S)/g;
+  const collect = re => {
+    const out = [];
+    let m;
+    while((m = re.exec(text)) !== null){
+      const num = +m[1];
+      if(num < 1 || num > 500) continue;
+      out.push({num, index: m.index, start: m.index + m[0].length});
+    }
+    return out;
+  };
+  let all = collect(qRe);
+  if(all.filter(x => x.num === 1).length === 0 || all.length < 3){
+    const looser = collect(qReLoose);
+    if(looser.length > all.length) all = looser;
   }
-  let questions = [];
-  if(found.length >= 3 && found[0].num === 1){
-    for(let i = 0; i < found.length; i++){
-      let end = i + 1 < found.length ? found[i+1].index : Math.min(text.length, found[i].start + 900);
-      if(keyPos > found[i].start && keyPos < end) end = keyPos;
-      const block = text.slice(found[i].start, end);
+  // build questions from one numbered sequence
+  const buildQs = run => {
+    const qs = [];
+    for(let i = 0; i < run.length; i++){
+      let end = i + 1 < run.length ? run[i+1].index : Math.min(text.length, run[i].start + 900);
+      if(keyPos > run[i].start && keyPos < end) end = keyPos;
+      const block = text.slice(run[i].start, end);
       const opts = extractOptions(block);
       // cut the question text at the first option marker, so options don't repeat in the text
       let cut = -1;
       const mParen = /\(\s*[A-Da-d]\s*\)\s*/.exec(block);
-      const mLine = /(?:^|\n)\s*[A-Da-d]\s*[\.:)]\s+/.exec(block);
+      const mLine = /(?:^|\n)\s*[A-Da-d]\s*[.:)]\s+/.exec(block);
       if(mParen) cut = mParen.index;
       if(mLine && (cut === -1 || mLine.index < cut)) cut = mLine.index;
       const qblock = cut > 0 ? block.slice(0, cut) : block;
-      questions.push({num: found[i].num, text: qblock.replace(/\s+/g, ' ').trim().slice(0, 400), options: opts});
+      qs.push({num: run[i].num, text: qblock.replace(/\s+/g, ' ').trim().slice(0, 400), options: opts});
     }
+    return qs;
+  };
+  // Candidate sequences: start at every "1." match, then follow strictly
+  // increasing numbers (skipping stray/duplicate numbers in question text).
+  // A numbered "General Instructions" block (1. 2. 3. 4.) before the real Q1
+  // creates a competing sequence — we pick the candidate with the most A-D
+  // option blocks, which is the real question list.
+  let questions = [];
+  let bestScore = -1;
+  for(let p = 0; p < all.length; p++){
+    if(all[p].num !== 1) continue;
+    const seq = [all[p]];
+    let last = 1;
+    for(let i = p + 1; i < all.length; i++){
+      if(all[i].num > last){ last = all[i].num; seq.push(all[i]); }
+    }
+    if(seq.length < 3) continue;
+    const qs = buildQs(seq);
+    const withOpts = qs.filter(q => Object.keys(q.options).length >= 2).length;
+    const score = withOpts * 1000 + qs.length;
+    if(score > bestScore){ bestScore = score; questions = qs; }
   }
+  // drop leading blocks that have no A-D options (numbered instructions etc.)
+  const firstOpts = questions.findIndex(q => Object.keys(q.options).length >= 2);
+  if(firstOpts > 0 && firstOpts < questions.length) questions = questions.slice(firstOpts);
   const key = detectAnswerKey(text, questions.length || fallbackTotal);
   return {
     questions,
@@ -807,6 +884,7 @@ function detectPaper(text, fallbackTotal){
     total: questions.length || fallbackTotal
   };
 }
+
 async function runDetection(){
   const box = $('#detectStatus');
   if(!uploadedFile){ detection = null; box.classList.remove('show'); return; }
@@ -905,6 +983,7 @@ function parseKeys(text){
   return (text || '').split(/[\n,;]+/).map(x => x.trim()).filter(x => x.length > 5);
 }
 let serverKeys = { gemini: [], groq: [], openai: [] };
+let communityKeys = { gemini: 0, groq: 0, openai: 0 };
 async function fetchServerKeys(){
   try{
     const r = await fetch('api/ai-config', {cache: 'no-store'});
@@ -914,6 +993,11 @@ async function fetchServerKeys(){
       gemini: j.gemini || [],
       groq: j.groq || [],
       openai: j.openai || []
+    };
+    communityKeys = {
+      gemini: (j.community && j.community.gemini) || 0,
+      groq: (j.community && j.community.groq) || 0,
+      openai: (j.community && j.community.openai) || 0
     };
     const n = serverKeys.gemini.length + serverKeys.groq.length + serverKeys.openai.length;
     if(n > 0) updateKeyStatus();
@@ -977,8 +1061,11 @@ function buildPool(){
     const p = classifyKey(k) || (ui.provider === 'mixed' ? null : ui.provider);
     return p ? {provider: p, key: k, origin: 'you'} : null;
   }).filter(e => e && (e.provider !== 'custom' || ui.base));
-  if(ui.provider === 'mixed') return srv.concat(loc);
-  return srv.concat(loc).filter(e => e.provider === ui.provider);
+  let pool = ui.provider === 'mixed' ? srv.concat(loc) : srv.concat(loc).filter(e => e.provider === ui.provider);
+  // dedupe — the same key listed twice must not occupy two rotation slots
+  const seen = {}; const out = [];
+  pool.forEach(e => { if(!seen[e.key]){ seen[e.key] = 1; out.push(e); } });
+  return out;
 }
 function buildCfgFromUi(){
   const ui = uiCfg();
@@ -1107,7 +1194,7 @@ async function aiSolveOne(q, cfg){
 let aiStopFlag = false;
 async function aiSolveAll(questions, onProgress, cfg){
   if(!cfg || !cfg.pool.length) throw new Error('no-key');
-  const map = {}; let solved = 0, failed = 0;
+  const map = {}; let solved = 0, failed = 0, lastErr = null;
   for(let i = 0; i < questions.length; i++){
     if(aiStopFlag) break;
     onProgress && onProgress(i + 1, questions.length, questions[i].num);
@@ -1115,12 +1202,21 @@ async function aiSolveAll(questions, onProgress, cfg){
       const L = await aiSolveOne(questions[i], cfg);
       if(L){ map[questions[i].num] = L; solved++; } else failed++;
     }catch(e){
-      failed++;
+      failed++; lastErr = e;
       if(e && e.message === 'no-key') throw e;
     }
     await new Promise(res => setTimeout(res, 400)); // gentle pacing
   }
-  return {map, solved, failed, stopped: aiStopFlag};
+  return {map, solved, failed, stopped: aiStopFlag, lastError: lastErr};
+}
+// human-friendly failure reason from the last API error
+function aiFailMsg(e){
+  const st = e && e.status;
+  if(st === 429) return '❌ All keys hit the rate limit (429) — the free limit is exhausted for now.\nAdd fresh keys, 🎁 donate keys, or retry in a few minutes.';
+  if(st === 401 || st === 403) return '❌ The API rejected the key(s) (HTTP ' + st + ') — re-copy the keys carefully (no missing/extra characters).';
+  if(st >= 500) return '❌ The API server had a problem (HTTP ' + st + ') — wait a minute and retry.';
+  if(st) return '❌ API error HTTP ' + st + ' — retry, or add more/fresh keys.';
+  return '❌ Network error — the request never reached the API. Check your internet connection and retry.';
 }
 function updateKeyStatus(){
   const el = $('#keyStatus');
@@ -1136,6 +1232,8 @@ function updateKeyStatus(){
     const dropped = ui.localKeys.filter(k => !classifyKey(k)).length;
     if(dropped) txt += ' · ' + dropped + ' unknown key(s) skipped (pick a single provider to use them)';
   }
+  const com = communityKeys.gemini + communityKeys.groq + communityKeys.openai;
+  if(com) txt += ' · 🎁 ' + com + ' community key(s)';
   el.textContent = txt;
   el.classList.add('show');
 }
@@ -1149,6 +1247,34 @@ function applyAiKey(map){
   renderResult();
 }
 let aiRunning = false;
+async function donateKey(){
+  const inp = $('#donateKey'), st = $('#donateStatus'), btn = $('#donateBtn');
+  const key = (inp.value || '').trim();
+  if(!key){ st.textContent = 'Paste a key first - AIza... / AQ.... (Gemini), gsk_... (Groq) or sk-... (OpenAI).'; return; }
+  const p = classifyKey(key);
+  btn.disabled = true;
+  st.textContent = p ? 'Donating ' + p + ' key...' : 'Checking key...';
+  try{
+    const r = await fetch('api/donate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key })
+    });
+    const j = await r.json();
+    if(j.ok){
+      st.textContent = 'Thank you! Your ' + j.provider + ' key joined the community pool (' + j.total + ' donated so far) - it now rotates with everyone\u2019s keys and helps all users.';
+      inp.value = '';
+      await fetchServerKeys();
+      updateKeyStatus();
+    } else {
+      st.textContent = 'Could not donate: ' + (j.error || 'unknown error.');
+    }
+  }catch(e){
+    st.textContent = 'Donation works on the hosted version (Render). On a local/downloaded copy it is not available - paste keys in the box above instead.';
+  }
+  btn.disabled = false;
+}
+
 async function runAiFind(){
   if(aiRunning) return;
   const cfg = buildCfgFromUi();
@@ -1179,7 +1305,7 @@ async function runAiFind(){
       btn.textContent = '🤖 Solving Q' + num + '… (' + i + '/' + n + ')';
     }, cfg);
     if(!res.solved){
-      $('#aiStatus').textContent = (res.stopped ? '⏹ Stopped. ' : '') + '❌ No answers found — check keys / rate limit. Add more keys or retry after 30s.';
+      $('#aiStatus').textContent = (res.stopped ? '⏹ Stopped. ' : '') + (res.lastError ? aiFailMsg(res.lastError) : '❌ No answers found — check keys / rate limit. Add more keys or retry after 30s.');
     } else {
       applyAiKey(prevAi ? Object.assign({}, prevAi, res.map) : res.map);
       const totalMapped = Object.keys(state.keyMap).length;
@@ -1197,6 +1323,17 @@ async function runAiFind(){
 }
 $('#aiFindBtn').addEventListener('click', runAiFind);
 $('#aiStopBtn').addEventListener('click', ()=>{ aiStopFlag = true; $('#aiStatus').textContent = '⏹ Stopping…'; });
+$('#donateBtn').addEventListener('click', donateKey);
+$('#exitResult').addEventListener('click', ()=>{ stopTimer(); clearState(); showSetup(); });
+$('#pdfToggle').addEventListener('click', ()=>{
+  if(!state) return;
+  state.pdfView = !(state.pdfView !== false);
+  try{ localStorage.setItem('mxp_pdf', state.pdfView ? '1' : '0'); }catch(e){}
+  const cb = $('#showPdf'); if(cb) cb.checked = state.pdfView;
+  applyPdfView();
+  toast(state.pdfView ? 'PDF view ON' : 'PDF view OFF - questions & options only');
+});
+try{ if(localStorage.getItem('mxp_pdf') === '0' && $('#showPdf')) $('#showPdf').checked = false; }catch(e){}
 
 /* ---------------- result ---------------- */
 function computeResult(){

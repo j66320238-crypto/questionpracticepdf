@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Mock Exam Pro — PDF Question Paper Test Interface</title>
-<link rel="stylesheet" href="style.css?v=35">
+<link rel="stylesheet" href="style.css?v=37">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
 </head>
 <body data-tab="paper">
@@ -117,9 +117,19 @@
       🔀 <b>Mixed mode:</b> paste keys from ANY mix of APIs — each key auto-routes to its own API (<b>AIza…</b>→Gemini, <b>gsk_…</b>→Groq, <b>sk-…</b>→OpenAI). One API rate-limited? Next key/API takes over automatically. Default models are used per API (pick a single provider to customize its model).<br>
       🖥 <b>On Render:</b> set env vars <b>GEMINI_API_KEYS</b>, <b>GROQ_API_KEYS</b>, <b>OPENAI_API_KEYS</b> (comma separated, multiple allowed) — loaded automatically, no UI paste needed.<br>
       🔒 Keys stay in this browser (localStorage) and are sent only to their own API provider.</p>
+      <div class="donate-box">
+        <p>🎁 <b>Community Keys — Donate API Key</b>: paste a <b>free-tier</b> key below and it joins the shared pool, rotating with everyone else's keys so ALL users of this app get AI answers (helps a lot when one API is rate-limited).</p>
+        <div class="donate-row">
+          <input id="donateKey" type="password" placeholder="Paste one key — AIza… / AQ.… (Gemini), gsk_… (Groq), sk-… (OpenAI)" autocomplete="off">
+          <button id="donateBtn" class="chip-btn" type="button">🎁 Donate Key</button>
+        </div>
+        <div class="donate-status" id="donateStatus"></div>
+        <p class="donate-fine">Note: donated keys are shared with all users of this app (same as env keys) — please donate only free-tier keys you're OK sharing. Your donation works on the hosted (Render) version.</p>
+      </div>
     </details>
 
     <div class="toggles-row">
+      <label class="toggle"><input type="checkbox" id="showPdf" checked><span></span> Show PDF with questions <span class="lopt">(turn OFF = text-only: question + options directly)</span></label>
       <label class="toggle"><input type="checkbox" id="autoAdvance" checked><span></span> Auto-advance to next question after answering</label>
       <label class="toggle"><input type="checkbox" id="soundOn" checked><span></span> Timer alarm & warning sounds</label>
     </div>
@@ -146,6 +156,7 @@
     <div class="mode-badge" id="modeBadge">EXAM</div>
     <div class="timer" id="timer">00:00:00</div>
     <button data-theme-btn class="icon-btn light" title="Toggle dark mode">🌙</button>
+    <button id="pdfToggle" class="icon-btn light" title="Show / hide PDF view (OFF = question + options only)">📄 PDF</button>
     <button id="exitBtn" class="icon-btn light" title="Exit to setup (progress is saved)">🏠 Exit</button>
     <button id="submitBtn">Submit</button>
   </header>
@@ -265,6 +276,7 @@
       <button id="dlResponse" class="primary">⬇ Response Sheet (txt)</button>
       <button id="dlResult">⬇ Result + Match (txt)</button>
       <button id="newExam" class="danger">🔄 New Exam</button>
+      <button id="exitResult" class="ghost">🏠 Exit</button>
     </div>
 
     <div id="resultTableWrap">
@@ -278,7 +290,7 @@
 
 <div id="toast"></div>
 
-<script src="lib/pdf.min.js?v=35"></script>
-<script src="app.js?v=35"></script>
+<script src="lib/pdf.min.js?v=37"></script>
+<script src="app.js?v=37"></script>
 </body>
 </html>
