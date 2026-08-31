@@ -19,6 +19,9 @@ multiple keys with auto-rotation). 100% open source, works offline, no database.
    - `OPENAI_API_KEYS`  — one or more keys, comma separated
    Keys are served to the app via `/api/ai-config` and rotate automatically on rate limits.
    You can also paste keys in the UI (Setup → AI Answer Finder) on any host.
+4. **Mixed mode** (default): paste keys from multiple APIs together — the app auto-routes
+   each key by prefix (`AIza…`/`AQ.…` → Gemini, `gsk_…` → Groq, `sk-…` → OpenAI),
+   uses each API's default model, and round-robins across all keys of all APIs.
 
 ## Free AI keys
 - Gemini: https://aistudio.google.com → Get API key (free tier)

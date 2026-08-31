@@ -112,6 +112,12 @@ function wireSetup(){
   $('#loadSample').addEventListener('click', loadSample);
   const provSel = $('#aiProvider');
   function fillProviderDefaults(){
+    if(provSel.value === 'mixed'){
+      $('#aiBase').value = '';
+      $('#aiModel').placeholder = 'Mixed uses default models per API';
+      $('#baseRow').classList.add('hidden');
+      return;
+    }
     const p = AI_PRESETS[provSel.value];
     if(provSel.value !== 'custom'){
       $('#aiBase').value = p.base || '';
@@ -145,7 +151,7 @@ function wireSetup(){
     if(aiRunning){ toast('AI is already working — wait or stop it'); return; }
     if(!detection || !detection.questions.length){ alert('Upload a PDF first and let auto-detect run — the AI needs the question text to solve.'); return; }
     const cfg = buildCfgFromUi();
-    if(!cfg.keys.length){
+    if(!cfg.pool.length){
       alert('No AI keys found.\n\nPaste 1 or more keys (one per line) in the "AI Answer Finder" box.\nFREE: Gemini — aistudio.google.com → Get API key\nFREE: Groq — console.groq.com → API Keys\n\nOr on Render: set the GEMINI_API_KEYS / GROQ_API_KEYS env vars.');
       return;
     }
@@ -940,26 +946,69 @@ function buildCfgFromUi(){
     keys
   };
 }
-let keyCursor = {};
-let keyCooldown = {};
-function nextKeyIndex(provider, poolSize){
-  if(poolSize === 0) return -1;
+// combined pool across ALL APIs: server env keys + your local keys.
+// In Mixed mode every key auto-routes to its own API (AIza→Gemini, gsk_→Groq, sk-→OpenAI).
+function classifyKey(k){
+  const t = (k || '').trim();
+  if(/^AIza/i.test(t) || /^AQ\./i.test(t)) return 'gemini';
+  if(/^gsk_/i.test(t)) return 'groq';
+  if(/^sk-/i.test(t)) return 'openai';
+  return null;
+}
+function modelFor(entry, cfg){
+  if(entry.provider === 'gemini') return (cfg.provider === 'mixed' ? '' : cfg.model) || 'gemini-2.5-flash';
+  if(entry.provider === 'groq')   return (cfg.provider === 'mixed' ? '' : cfg.model) || 'llama-3.3-70b-versatile';
+  if(entry.provider === 'openai') return (cfg.provider === 'mixed' ? '' : cfg.model) || 'gpt-4o-mini';
+  return cfg.model || '';
+}
+function baseFor(entry, cfg){
+  if(entry.provider === 'gemini') return '';
+  if(entry.provider === 'groq')   return 'https://api.groq.com/openai/v1';
+  if(entry.provider === 'openai') return (cfg.provider === 'openai' ? (cfg.base || '') : '') || 'https://api.openai.com/v1';
+  return cfg.base || '';
+}
+function buildPool(){
+  const ui = uiCfg();
+  const srv = []
+    .concat((serverKeys.gemini || []).map(k => ({provider: 'gemini', key: k, origin: 'server'})))
+    .concat((serverKeys.groq || []).map(k => ({provider: 'groq', key: k, origin: 'server'})))
+    .concat((serverKeys.openai || []).map(k => ({provider: 'openai', key: k, origin: 'server'})));
+  const loc = ui.localKeys.map(k => {
+    const p = classifyKey(k) || (ui.provider === 'mixed' ? null : ui.provider);
+    return p ? {provider: p, key: k, origin: 'you'} : null;
+  }).filter(e => e && (e.provider !== 'custom' || ui.base));
+  if(ui.provider === 'mixed') return srv.concat(loc);
+  return srv.concat(loc).filter(e => e.provider === ui.provider);
+}
+function buildCfgFromUi(){
+  const ui = uiCfg();
+  const pool = buildPool();
+  const preset = AI_PRESETS[ui.provider] || {};
+  return {
+    provider: ui.provider,
+    model: ui.model || preset.model || '',
+    base: ui.provider === 'custom' ? ui.base : (preset.base || ''),
+    pool
+  };
+}
+let poolCursor = 0;
+const keyCooldown = {};
+function cooldownId(entry){ return entry.provider + ':' + String(entry.key).slice(0, 16); }
+function nextPoolIndex(pool, start){
+  const n = pool.length;
   const now = Date.now();
-  for(let i = 0; i < poolSize; i++){
-    const idx = ((keyCursor[provider] || 0) + i) % poolSize;
-    const until = keyCooldown[provider + ':' + idx] || 0;
-    if(until < now) return idx;
+  for(let i = 0; i < n; i++){
+    const idx = (start + i) % n;
+    if((keyCooldown[cooldownId(pool[idx])] || 0) < now) return idx;
   }
-  // all cooling: pick the one cooling down least
-  let best = 0, bestUntil = Infinity;
-  for(let i = 0; i < poolSize; i++){
-    const until = keyCooldown[provider + ':' + i] || 0;
-    if(until < bestUntil){ bestUntil = until; best = i; }
+  let best = start % n, bestUntil = Infinity;
+  for(let i = 0; i < n; i++){
+    const idx = (start + i) % n;
+    const u = keyCooldown[cooldownId(pool[idx])] || 0;
+    if(u < bestUntil){ bestUntil = u; best = idx; }
   }
   return best;
 }
-function setCooldown(provider, idx, ms){ keyCooldown[provider + ':' + idx] = Date.now() + ms; }
-
 function aiPromptForQ(q){
   let t = 'Question: ' + (q.text || 'See the options.');
   const opts = q.options || {};
@@ -995,7 +1044,7 @@ async function solveWithKey(provider, key, model, base, prompt){
       body: JSON.stringify({
         systemInstruction: {parts: [{text: 'You are an expert exam answer solver. You always give the single correct option.'}]},
         contents: [{parts: [{text: prompt}]}],
-        generationConfig: {temperature: 0, maxOutputTokens: 40}
+        generationConfig: {temperature: 0, maxOutputTokens: 2048}
       })
     });
     if(!r.ok){
@@ -1004,8 +1053,9 @@ async function solveWithKey(provider, key, model, base, prompt){
       throw e;
     }
     const j = await r.json();
-    const txt = j.candidates && j.candidates[0] && j.candidates[0].content
-      ? j.candidates[0].content.parts.map(p => p.text || '').join('') : '';
+    const txt = (j.candidates || []).map(c =>
+      (c && c.content && c.content.parts) ? c.content.parts.map(p => p.text || '').join('') : ''
+    ).join('\n');
     return parseAiLetter(txt);
   }
   // groq / openai / custom — OpenAI-compatible chat/completions
@@ -1030,34 +1080,33 @@ async function solveWithKey(provider, key, model, base, prompt){
   const txt = j.choices && j.choices[0] && j.choices[0].message ? j.choices[0].message.content : '';
   return parseAiLetter(txt);
 }
+
 async function aiSolveOne(q, cfg){
-  const poolSize = cfg.keys.length;
-  if(poolSize === 0) throw new Error('no-key');
+  const pool = cfg.pool;
+  const n = pool.length;
+  if(n === 0) throw new Error('no-key');
   const prompt = aiPromptForQ(q);
   let lastErr = null;
-  // try up to all keys (rotation), skipping cooling-down ones
-  for(let attempt = 0; attempt < poolSize; attempt++){
-    const idx = nextKeyIndex(cfg.provider, poolSize);
-    if(idx < 0) break;
-    keyCursor[cfg.provider] = (idx + 1) % poolSize;
-    const key = cfg.keys[idx];
+  for(let attempt = 0; attempt < n; attempt++){
+    const idx = nextPoolIndex(pool, poolCursor);
+    poolCursor = (idx + 1) % n;
+    const entry = pool[idx];
     try{
-      const letter = await solveWithKey(cfg.provider, key, cfg.model, cfg.base, prompt);
-      return letter;
+      return await solveWithKey(entry.provider, entry.key, modelFor(entry, cfg), baseFor(entry, cfg), prompt);
     }catch(e){
       lastErr = e;
       if(e && (e.status === 429 || e.status === 403 || e.status === 401 || (e.status || 0) >= 500)){
-        setCooldown(cfg.provider, idx, 30000); // rate limit / auth -> cool down, try next key
+        keyCooldown[cooldownId(entry)] = Date.now() + 30000; // rate limit / auth -> cool down, next key
         continue;
       }
-      throw e; // other errors (network, bad model) -> stop
+      throw e;
     }
   }
   throw lastErr || new Error('All keys failed (rate limit) — add more keys or wait a bit.');
 }
 let aiStopFlag = false;
 async function aiSolveAll(questions, onProgress, cfg){
-  if(!cfg || !cfg.keys.length) throw new Error('no-key');
+  if(!cfg || !cfg.pool.length) throw new Error('no-key');
   const map = {}; let solved = 0, failed = 0;
   for(let i = 0; i < questions.length; i++){
     if(aiStopFlag) break;
@@ -1077,11 +1126,16 @@ function updateKeyStatus(){
   const el = $('#keyStatus');
   if(!el) return;
   const ui = uiCfg();
-  const pool = keyPool(ui.provider);
-  const srv = (serverKeys[ui.provider] || []).length;
-  let txt = '🔑 Key pool (' + ui.provider + '): ' + pool.length +
-    (pool.length ? ' — ' + srv + ' from server env, ' + (pool.length - srv) + ' added by you' : ' — no keys yet');
-  if(!ui.model && AI_PRESETS[ui.provider]) txt += ' · model: ' + (AI_PRESETS[ui.provider].model || 'default');
+  const pool = buildPool();
+  const byApi = {};
+  pool.forEach(e => { byApi[e.provider] = (byApi[e.provider] || 0) + 1; });
+  const parts = Object.keys(byApi).map(p => byApi[p] + ' ' + p);
+  let txt = '🔑 Key pool' + (ui.provider === 'mixed' ? ' (mixed — all APIs)' : ' (' + ui.provider + ')') + ': ' + pool.length +
+    (pool.length ? ' — ' + parts.join(' + ') : ' — no keys yet');
+  if(ui.provider === 'mixed'){
+    const dropped = ui.localKeys.filter(k => !classifyKey(k)).length;
+    if(dropped) txt += ' · ' + dropped + ' unknown key(s) skipped (pick a single provider to use them)';
+  }
   el.textContent = txt;
   el.classList.add('show');
 }
@@ -1098,7 +1152,7 @@ let aiRunning = false;
 async function runAiFind(){
   if(aiRunning) return;
   const cfg = buildCfgFromUi();
-  if(!cfg.keys.length){
+  if(!cfg.pool.length){
     if(confirm('No AI API keys found.\n\nAdd your keys in Setup → "AI Answer Finder" (multiple keys, one per line).\nFREE options: Gemini (aistudio.google.com) or Groq (console.groq.com).\nIf this app is on Render, set GEMINI_API_KEYS / GROQ_API_KEYS env vars.\n\nOpen Setup now?')) showSetup();
     return;
   }
@@ -1119,7 +1173,7 @@ async function runAiFind(){
   aiRunning = true; aiStopFlag = false;
   const btn = $('#aiFindBtn'), stopB = $('#aiStopBtn');
   btn.disabled = true; stopB.classList.remove('hidden');
-  $('#aiStatus').textContent = '🤖 ' + (prevAi ? 'Retrying ' + questions.length + ' missing… ' : 'Starting… ') + '(' + cfg.keys.length + ' key(s) in rotation)';
+  $('#aiStatus').textContent = '🤖 ' + (prevAi ? 'Retrying ' + questions.length + ' missing… ' : 'Starting… ') + '(' + cfg.pool.length + ' key(s) in rotation)';
   try{
     const res = await aiSolveAll(questions, (i, n, num) => {
       btn.textContent = '🤖 Solving Q' + num + '… (' + i + '/' + n + ')';

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Mock Exam Pro — PDF Question Paper Test Interface</title>
-<link rel="stylesheet" href="style.css?v=34">
+<link rel="stylesheet" href="style.css?v=35">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
 </head>
 <body data-tab="paper">
@@ -92,9 +92,10 @@
         <div>
           <label>Provider</label>
           <select id="aiProvider">
-            <option value="gemini">Gemini (recommended — free tier at aistudio.google.com)</option>
-            <option value="groq">Groq — free (console.groq.com)</option>
-            <option value="openai">OpenAI</option>
+            <option value="mixed" selected>Mixed — all keys, all APIs together (recommended)</option>
+            <option value="gemini">Only Gemini (free at aistudio.google.com)</option>
+            <option value="groq">Only Groq (free at console.groq.com)</option>
+            <option value="openai">Only OpenAI</option>
             <option value="custom">Custom (any OpenAI-compatible API)</option>
           </select>
         </div>
@@ -113,8 +114,9 @@
       </div>
       <div class="key-status" id="keyStatus"></div>
       <p class="ai-hint">⚠️ AI answers are ESTIMATES — mistakes are possible. Always check important answers yourself.<br>
-      🖥 <b>On Render:</b> set env vars <b>GEMINI_API_KEYS</b> and/or <b>GROQ_API_KEYS</b> (comma or newline separated, multiple allowed) — they are loaded automatically, no need to paste keys in the UI.<br>
-      🔒 Keys saved in this browser (localStorage) are sent only to the provider you choose.</p>
+      🔀 <b>Mixed mode:</b> paste keys from ANY mix of APIs — each key auto-routes to its own API (<b>AIza…</b>→Gemini, <b>gsk_…</b>→Groq, <b>sk-…</b>→OpenAI). One API rate-limited? Next key/API takes over automatically. Default models are used per API (pick a single provider to customize its model).<br>
+      🖥 <b>On Render:</b> set env vars <b>GEMINI_API_KEYS</b>, <b>GROQ_API_KEYS</b>, <b>OPENAI_API_KEYS</b> (comma separated, multiple allowed) — loaded automatically, no UI paste needed.<br>
+      🔒 Keys stay in this browser (localStorage) and are sent only to their own API provider.</p>
     </details>
 
     <div class="toggles-row">
@@ -276,7 +278,7 @@
 
 <div id="toast"></div>
 
-<script src="lib/pdf.min.js?v=34"></script>
-<script src="app.js?v=34"></script>
+<script src="lib/pdf.min.js?v=35"></script>
+<script src="app.js?v=35"></script>
 </body>
 </html>
