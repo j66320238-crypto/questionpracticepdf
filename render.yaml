@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: mock-exam-pro
+    runtime: node
+    plan: free
+    buildCommand: ""
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: GEMINI_API_KEYS
+        value: "paste-your-gemini-keys-here-comma-separated"
+      - key: GROQ_API_KEYS
+        value: ""

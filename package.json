@@ -1,0 +1,11 @@
+{
+  "name": "mock-exam-pro",
+  "version": "3.4.0",
+  "private": true,
+  "description": "PDF question paper mock exam app — timed exams, practice mode, auto detection, Gemini/Groq AI answer finder",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": { "node": ">=18" }
+}

@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Mock Exam Pro — PDF Question Paper Test Interface</title>
+<link rel="stylesheet" href="style.css?v=34">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
+</head>
+<body data-tab="paper">
+
+<!-- ================= SETUP ================= -->
+<section id="setupScreen" class="screen">
+  <div class="setup-card">
+    <div id="resumeBar" class="resume-bar hidden">
+      <span class="rt" id="resumeText"></span>
+      <button id="resumeBtn">▶ Resume</button>
+      <button id="discardBtn">Discard</button>
+    </div>
+    <div class="setup-head">
+      <h1>🎯 Mock Exam Pro <span class="sub">Upload a question paper PDF → timed CBT-style exam, instant-feedback practice, auto question detection & answer-key matching. Works for any exam — CUET, boards, university, any paper…</span></h1>
+      <button data-theme-btn class="icon-btn" title="Toggle dark mode">🌙</button>
+    </div>
+
+    <label>Exam Name</label>
+    <input id="examName" type="text" value="Mock Exam #1" placeholder="e.g. CUET Accountancy Mock">
+
+    <label>Mode</label>
+    <div class="mode-cards">
+      <div class="mode-card sel" id="modeExam">
+        <div class="mode-ico">📝</div>
+        <div class="mode-t">Exam Mode</div>
+        <div class="mode-d">Timed CBT-style test. No feedback while answering. Timer runs, auto-submit at 00:00, then match the answer key to get your score.</div>
+      </div>
+      <div class="mode-card" id="modePractice">
+        <div class="mode-ico">🎮</div>
+        <div class="mode-t">Practice Mode</div>
+        <div class="mode-d">Untimed drill with instant feedback: green = correct, red = wrong. Needs an answer key (auto-detected from the PDF, or paste below). Ends with a full summary + score.</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Total Questions</label>
+        <input id="totalQ" type="number" min="1" max="500" value="75">
+      </div>
+      <div>
+        <label>Marks — Correct (+) / Wrong (−)</label>
+        <div class="time-row">
+          <input id="posMark" type="number" step="0.5" min="0" value="4">
+          <span>/</span>
+          <input id="negMark" type="number" step="0.5" min="0" value="1">
+        </div>
+      </div>
+    </div>
+
+    <label>Test Duration <span class="lopt">(Exam Mode only — Practice is untimed)</span></label>
+    <div class="time-row">
+      <input id="th" type="number" min="0" max="12" value="3"><span>:</span>
+      <input id="tm" type="number" min="0" max="59" value="0"><span>:</span>
+      <input id="ts" type="number" min="0" max="59" value="0">
+      <span class="dim">hrs : min : sec</span>
+    </div>
+    <div class="presets">
+      <button data-min="60">1 hr</button>
+      <button data-min="90">1.5 hr</button>
+      <button data-min="120">2 hr</button>
+      <button data-min="150">2.5 hr</button>
+      <button data-min="180">3 hr</button>
+    </div>
+
+    <label>Question Paper PDF <span class="lopt">(optional)</span></label>
+    <div id="pdfDrop" class="drop">
+      <input type="file" id="pdfFile" accept="application/pdf">
+      <div id="pdfName">📄 Tap to choose a PDF</div>
+    </div>
+    <div class="sample-row">
+      <button id="loadSample" class="chip-btn">📘 Load Sample Paper</button>
+      <label class="toggle"><input type="checkbox" id="autoDetect" checked><span></span> Auto-detect questions, options & answer key from PDF</label>
+    </div>
+    <div id="detectStatus" class="detect-status"></div>
+
+    <label>Answer Key <span class="lopt">(for Practice Mode — auto-fills when detected in the PDF)</span></label>
+    <textarea id="keyInput2" rows="2" placeholder="e.g. 1. A   2. B   3. C ...   or just letters: A B C D ..."></textarea>
+    <div class="ai-find-row">
+      <button id="aiKeySetup" class="chip-btn">🤖 Get AI Key</button>
+      <span class="ai-note">No key in the PDF? AI can solve each question for you (verify them!)</span>
+    </div>
+    <details class="ai-box" open>
+      <summary>🔑 AI Answer Finder — API settings <span class="lopt">(optional · multiple keys supported)</span></summary>
+      <div class="ai-grid">
+        <div>
+          <label>Provider</label>
+          <select id="aiProvider">
+            <option value="gemini">Gemini (recommended — free tier at aistudio.google.com)</option>
+            <option value="groq">Groq — free (console.groq.com)</option>
+            <option value="openai">OpenAI</option>
+            <option value="custom">Custom (any OpenAI-compatible API)</option>
+          </select>
+        </div>
+        <div>
+          <label>Model</label>
+          <input id="aiModel" type="text" placeholder="gemini-2.5-flash">
+        </div>
+        <div id="baseRow" class="hidden">
+          <label>Base URL <span class="lopt">(custom only)</span></label>
+          <input id="aiBase" type="text" placeholder="https://api.openai.com/v1">
+        </div>
+        <div class="ai-keys-cell">
+          <label>API Key(s) <span class="lopt">— one per line, all will be used (auto-rotation on rate limit)</span></label>
+          <textarea id="aiKeys" rows="3" placeholder="Paste your key(s) here, one per line&#10;AIza...&#10;gsk_..."></textarea>
+        </div>
+      </div>
+      <div class="key-status" id="keyStatus"></div>
+      <p class="ai-hint">⚠️ AI answers are ESTIMATES — mistakes are possible. Always check important answers yourself.<br>
+      🖥 <b>On Render:</b> set env vars <b>GEMINI_API_KEYS</b> and/or <b>GROQ_API_KEYS</b> (comma or newline separated, multiple allowed) — they are loaded automatically, no need to paste keys in the UI.<br>
+      🔒 Keys saved in this browser (localStorage) are sent only to the provider you choose.</p>
+    </details>
+
+    <div class="toggles-row">
+      <label class="toggle"><input type="checkbox" id="autoAdvance" checked><span></span> Auto-advance to next question after answering</label>
+      <label class="toggle"><input type="checkbox" id="soundOn" checked><span></span> Timer alarm & warning sounds</label>
+    </div>
+
+    <label>Strict Mode <span class="lopt">(Exam Mode only — protects your time)</span></label>
+    <select id="strictMode">
+      <option value="off">Off — normal exam</option>
+      <option value="warn">On — warn &amp; count tab/window switches</option>
+      <option value="pause">On — warn, count &amp; PAUSE the timer while you are away</option>
+    </select>
+
+    <button id="startBtn" class="big">🚀 Start Exam</button>
+    <p class="setup-foot">
+      <b>How it works:</b> 1. Upload PDF → 2. Pick mode & time → 3. Start → 4. Read on the left, tap A/B/C/D on the right → 5. Auto-submit / summary → 6. Match key & download result.<br>
+      100% static &amp; offline — your PDF never leaves the device. Answers auto-save in this browser (refresh-safe). Host it on <b>Render / Netlify / Vercel / GitHub Pages</b>, or just open the file.
+    </p>
+  </div>
+</section>
+
+<!-- ================= EXAM ================= -->
+<section id="examScreen" class="screen hidden">
+  <header id="examHeader">
+    <div class="exam-name" id="headerExamName">Mock Exam</div>
+    <div class="mode-badge" id="modeBadge">EXAM</div>
+    <div class="timer" id="timer">00:00:00</div>
+    <button data-theme-btn class="icon-btn light" title="Toggle dark mode">🌙</button>
+    <button id="exitBtn" class="icon-btn light" title="Exit to setup (progress is saved)">🏠 Exit</button>
+    <button id="submitBtn">Submit</button>
+  </header>
+
+  <div id="strictBanner"></div>
+
+  <nav id="mobileTabs">
+    <button data-tab="paper" class="active">📄 Paper</button>
+    <button data-tab="question">❓ Question</button>
+    <button data-tab="answer">✍️ Answer</button>
+    <button data-tab="palette">🎨 Palette</button>
+  </nav>
+
+  <div class="exam-main">
+    <!-- Paper panel -->
+    <div id="paperPanel" class="panel">
+      <div class="paper-toolbar">
+        <button id="zoomOut" title="Zoom out">−</button>
+        <span id="zoomLabel">100%</span>
+        <button id="zoomIn" title="Zoom in">+</button>
+        <button id="prevPage" title="Previous page">◀</button>
+        <span id="pageLabel">– / –</span>
+        <button id="nextPage" title="Next page">▶</button>
+        <span class="spacer"></span>
+        <button id="openPdfTab" class="file hidden" title="Open PDF in a new tab">⛶ New Tab</button>
+        <button id="changePdf" class="file">📁 Change PDF</button>
+        <input type="file" id="changePdfInput" accept="application/pdf" class="hidden">
+      </div>
+      <div id="paperView">
+        <div class="paper-ph" id="paperPlaceholder">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Side: question / answer / palette -->
+    <div class="side">
+      <nav id="sideTabs">
+        <button data-stab="question" class="active">❓ Question</button>
+        <button data-stab="answer">✍️ Answer</button>
+        <button data-stab="palette">🎨 Palette</button>
+      </nav>
+
+      <div id="questionPanel" class="panel spanel active">
+        <div class="q-head">
+          <button id="qvPrev">◀</button>
+          <div class="q-num">Question <span id="qvNum">1</span><span class="q-total">/ 75</span></div>
+          <button id="qvNext">Next ▶</button>
+        </div>
+        <div id="qvBody" class="qv-body"></div>
+      </div>
+
+      <div id="answerPanel" class="panel spanel">
+        <div class="q-head">
+          <button id="qPrev">◀ Prev</button>
+          <div class="q-num">Q <span id="curQ">1</span><span class="q-total">/ 75</span></div>
+          <button id="qNext">Next ▶</button>
+        </div>
+        <div class="msbar"><div id="msBar"></div></div>
+        <div id="qStatusBadge" class="badge">Not Visited</div>
+        <div class="opts">
+          <button class="opt" data-opt="A">A</button>
+          <button class="opt" data-opt="B">B</button>
+          <button class="opt" data-opt="C">C</button>
+          <button class="opt" data-opt="D">D</button>
+        </div>
+        <div class="actions">
+          <button id="markBtn">🚩 Mark for Review</button>
+          <button id="clearBtn">Clear Answer</button>
+        </div>
+        <div class="jump">
+          Go to Q <input id="jumpQ" type="number" min="1" max="75" value="1">
+          <button id="jumpGo">Go</button>
+        </div>
+        <div class="mini-stats" id="miniStats"></div>
+      </div>
+
+      <div id="palettePanel" class="panel spanel">
+        <div class="legend">
+          <span><i class="dot a"></i>Answered</span>
+          <span><i class="dot n"></i>Not Answered</span>
+          <span><i class="dot m"></i>Marked</span>
+          <span><i class="dot nv"></i>Not Visited</span>
+        </div>
+        <div id="paletteGrid" class="palette-grid"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= RESULT ================= -->
+<section id="resultScreen" class="screen hidden">
+  <div class="result-wrap">
+    <div class="setup-head">
+      <h1>📋 Response Sheet &amp; Summary</h1>
+      <button data-theme-btn class="icon-btn" title="Toggle dark mode">🌙</button>
+    </div>
+    <p id="resultSub"></p>
+
+    <div class="cards" id="resultCards"></div>
+
+    <div class="strict-note" id="strictNote"></div>
+    <div class="key-disclaimer" id="keyDisclaimer"></div>
+    <div class="ansline" id="ansLine"></div>
+
+    <div class="keybox">
+      <h3>✅ Match with Answer Key (any time, as many times as you want)</h3>
+      <p>Paste the official key — formats: <b>"1. A  2. B  3. C …"</b> or just letters <b>"A B C D …"</b> in order. Score uses your custom +/− marks.</p>
+      <textarea id="keyInput" rows="3" placeholder="1. A  2. B  3. C  4. D ..."></textarea>
+      <div class="ai-result-row">
+        <button id="matchBtn" class="ai-match">Match &amp; Score</button>
+        <button id="aiFindBtn" class="ai-btn">🤖 Find Answers (AI)</button>
+        <button id="aiStopBtn" class="ai-stop hidden">⏹ Stop</button>
+      </div>
+      <div class="ai-status" id="aiStatus"></div>
+    </div>
+
+    <div class="btnrow">
+      <button id="dlResponse" class="primary">⬇ Response Sheet (txt)</button>
+      <button id="dlResult">⬇ Result + Match (txt)</button>
+      <button id="newExam" class="danger">🔄 New Exam</button>
+    </div>
+
+    <div id="resultTableWrap">
+      <table id="resultTable">
+        <thead><tr><th>Q</th><th>Your Answer</th><th>Answer Key</th><th>Status</th></tr></thead>
+        <tbody id="resultBody"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<div id="toast"></div>
+
+<script src="lib/pdf.min.js?v=34"></script>
+<script src="app.js?v=34"></script>
+</body>
+</html>
